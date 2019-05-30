@@ -1,0 +1,118 @@
+#include <ros/ros.h>
+#include <geometry_msgs/Twist.h>
+#include <turtlesim/Pose.h>
+#include <cmath>
+#include <iostream>
+#include <algorithm>
+#include <turtlesim/Spawn.h>
+#include <cstdlib>
+#include <ctime>
+using namespace std;
+
+turtlesim::Pose current_pose[50];
+
+const float PI = 3.14159265;
+const double pl = 0.01;
+
+class Posecallback {
+public:
+    int turtle_idx;
+    ros::Subscriber sub;
+    void callback(const turtlesim::PoseConstPtr &pose)
+    {
+        current_pose[turtle_idx] = *pose;
+    }
+};
+
+double distance(double x0, double y0, double goal_x, double goal_y)
+{
+    double dx = x0 - goal_x, dy = y0 - goal_y;
+    double d = sqrt(pow(goal_x - x0, 2) + pow(goal_y - y0, 2));
+    
+    if(d < pl) d = 0.0 ;
+    return d ;
+}
+double dalpha(double x0, double y0, double goal_x, double goal_y, double z0)
+{
+    double alfa;
+    if(distance(x0, y0, goal_x, goal_y)< pl) alfa = 0.0;
+    else
+    {
+    alfa =  asin ((cos(z0)*(goal_y-y0)-sin(z0)*(goal_x-x0)) / distance(x0, y0, goal_x, goal_y));
+    }
+   return alfa;
+}
+geometry_msgs::Twist getMessage(double x0, double y0, double goal_x, double goal_y, double z0)
+{
+    geometry_msgs::Twist msg;
+    msg.linear.x = min(4*distance(x0, y0, goal_x, goal_y), 6.5);
+    msg.angular.z = 10*dalpha(x0, y0, goal_x, goal_y, z0);
+    return msg;
+}
+
+geometry_msgs::Twist getMessage1(double linear_x, double angular_z)
+{
+    geometry_msgs::Twist msg;
+    msg.linear.x = linear_x;
+    msg.angular.z = angular_z;
+    return msg;
+}
+
+int main(int argc, char **argv)
+{
+    srand(time(NULL));
+    ros::init(argc, argv, "pl_socute");
+    ros::NodeHandle node;
+    int n = atof(argv[1]) ;
+    Posecallback sub[50];
+    ros::Publisher pub[50];
+    for(int i = 1;i < n;i++)
+    {
+        ros::service::waitForService("spawn");
+        ros::ServiceClient spawner = node.serviceClient<turtlesim::Spawn>("spawn");
+        turtlesim::Spawn turtle;
+        turtle.request.x = (rand() % 20)/2;
+        turtle.request.y = (rand() % 20)/2;
+        turtle.request.theta = 1.04;
+        spawner.call(turtle);
+    }
+    for(int i = 1;i <= n;i++)
+    {
+        stringstream s;
+        s << "turtle" << i;
+        string name = s.str();
+        sub[i].turtle_idx = i;
+        sub[i].sub = node.subscribe(name+"/pose", 100, &Posecallback::callback, &sub[i]);
+        pub[i] = node.advertise<geometry_msgs::Twist>(name+"/cmd_vel", 100);
+    }
+    const double tolerance = 1e-2;
+    double x_y[50][2];
+        x_y[1][0] = current_pose[1].x;
+        x_y[1][1] = current_pose[1].y;
+    int j = 2;
+    ros::Rate rate(100);
+    while(node.ok())
+    {
+        for(int i = 0;i < n;i++)
+        {
+            if(distance(current_pose[i+1].x, current_pose[i+1].y, x_y[i][0], x_y[i][1]) < tolerance)
+            {
+                if(j < argc - 1)
+                {
+                    x_y[i][0] = atof(argv[j++]);
+                    x_y[i][1] = atof(argv[j++]);
+                    cout << "turtle " << i + 1 << " go to: " << x_y[i][0] << "," << x_y[i][1] << endl;
+                }
+                //pub[i+1].publish(getMessage(current_pose[i+1].x, current_pose[i+1].y, x_y[i][0], x_y[i][1], current_pose[i+1].theta));
+            }
+            pub[i+1].publish(getMessage(current_pose[i+1].x, current_pose[i+1].y, x_y[i][0], x_y[i][1], current_pose[i+1].theta));
+        }
+        //for (int i = 1;i <= n;i++)
+        //{
+        //    pub[i].publish(getMessage(current_pose[i].x, current_pose[i].y, x_y[i][0], x_y[i][1], current_pose[i].theta));
+        //}
+        rate.sleep();
+        ros::spinOnce();
+    }
+    return 0;
+}
